@@ -3,10 +3,12 @@ from datetime import datetime
 
 class ImagePrompt(BaseModel):
     prompt: str
+    model: str = "dall-e"  # 默认使用 DALL-E 模型
 
 class ImageToImagePrompt(BaseModel):
     prompt: str
     image_data: str  # base64编码的图片数据
+    model: str = "dall-e"  # 默认使用 DALL-E 模型
 
 class ImageResponse(BaseModel):
     url: str
