@@ -1,0 +1,92 @@
+{
+    "5": {
+        "class_type": "EmptyLatentImage",
+        "inputs": {
+            "width": 1024,
+            "height": 1024,
+            "batch_size": 1
+        }
+    },
+    "22": {
+        "class_type": "BasicGuider",
+        "inputs": {
+            "model": ["12", 0],
+            "conditioning": ["6", 0]
+        }
+    },
+    "8": {
+        "class_type": "VAEDecode",
+        "inputs": {
+            "samples": ["13", 0],
+            "vae": ["10", 0]
+        }
+    },
+    "25": {
+        "class_type": "RandomNoise",
+        "inputs": {
+            "noise_seed": 782619153058034,
+            "mode": "randomize"
+        }
+    },
+    "11": {
+        "class_type": "DualCLIPLoader",
+        "inputs": {
+            "clip_name1": "t5xxl_fp16.safetensors",
+            "clip_name2": "clip_l.safetensors",
+            "type": "flux",
+            "mode": "default"
+        }
+    },
+    "10": {
+        "class_type": "VAELoader",
+        "inputs": {
+            "vae_name": "ae.sft"
+        }
+    },
+    "9": {
+        "class_type": "SaveImage",
+        "inputs": {
+            "images": ["8", 0],
+            "filename_prefix": "ComfyUI"
+        }
+    },
+    "17": {
+        "class_type": "BasicScheduler",
+        "inputs": {
+            "model": ["12", 0],
+            "scheduler": "normal",
+            "steps": 20,
+            "denoise": 1
+        }
+    },
+    "16": {
+        "class_type": "KSamplerSelect",
+        "inputs": {
+            "sampler_name": "euler"
+        }
+    },
+    "13": {
+        "class_type": "SamplerCustomAdvanced",
+        "inputs": {
+            "noise": ["25", 0],
+            "guider": ["22", 0],
+            "sampler": ["16", 0],
+            "sigmas": ["17", 0],
+            "latent_image": ["5", 0]
+        }
+    },
+    "6": {
+        "class_type": "CLIPTextEncode",
+        "inputs": {
+            "clip": ["11", 0],
+            "text": ""
+        }
+    },
+    "12": {
+        "class_type": "UNETLoader",
+        "inputs": {
+            "unet_name": "FLUX\\flux1-dev.sft",
+            "weight_dtype": "fp8_e4m3fn"
+        }
+    }
+} 

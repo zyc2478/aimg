@@ -1,0 +1,534 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI 图像生成测试</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            background-color: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+        }
+        .author {
+            color: #666;
+            font-size: 14px;
+        }
+        .tabs {
+            display: flex;
+            margin-bottom: 20px;
+            border-bottom: 1px solid #ddd;
+        }
+        .tab {
+            padding: 10px 20px;
+            cursor: pointer;
+            border-bottom: 2px solid transparent;
+        }
+        .tab.active {
+            border-bottom-color: #2196F3;
+            color: #2196F3;
+        }
+        .tab-content {
+            display: none;
+        }
+        .tab-content.active {
+            display: block;
+        }
+        .form-group {
+            margin-bottom: 15px;
+        }
+        label {
+            display: block;
+            margin-bottom: 5px;
+            color: #333;
+        }
+        input[type="text"], textarea {
+            width: 100%;
+            padding: 8px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            box-sizing: border-box;
+        }
+        textarea {
+            height: 100px;
+            resize: vertical;
+        }
+        .slider {
+            width: 100%;
+            margin: 10px 0;
+        }
+        button {
+            background-color: #2196F3;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 16px;
+        }
+        button:hover {
+            background-color: #1976D2;
+        }
+        .image-preview {
+            margin-top: 20px;
+            text-align: center;
+        }
+        .image-preview img {
+            max-width: 100%;
+            border-radius: 4px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .loading {
+            display: none;
+            text-align: center;
+            margin: 20px 0;
+            color: #666;
+        }
+        .loading.active {
+            display: block;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>AI 图像生成</h1>
+            <div class="author">Author by 风天行</div>
+        </div>
+        
+        <div class="tabs">
+            <div class="tab active" onclick="switchTab('text-to-image')">文本生成图像</div>
+            <div class="tab" onclick="switchTab('image-to-image')">图像转换</div>
+        </div>
+        
+        <div id="text-to-image" class="tab-content active">
+            <div class="form-group">
+                <label for="prompt">提示词</label>
+                <textarea id="prompt" placeholder="请输入提示词..."></textarea>
+            </div>
+            <div class="form-group">
+                <label for="negative-prompt">反向提示词</label>
+                <textarea id="negative-prompt" placeholder="请输入反向提示词...">ugly, blurry, bad quality</textarea>
+            </div>
+            <div class="form-group">
+                <label for="steps">推理步数: <span id="steps-value">20</span></label>
+                <input type="range" id="steps" class="slider" min="1" max="100" value="20" oninput="updateValue('steps-value', this.value)">
+            </div>
+            <div class="form-group">
+                <label for="guidance">引导系数: <span id="guidance-value">7</span></label>
+                <input type="range" id="guidance" class="slider" min="1" max="20" value="7" step="0.1" oninput="updateValue('guidance-value', this.value)">
+            </div>
+            <button onclick="generateImage()">生成图像</button>
+            <div class="loading" id="text-to-image-loading">正在生成图像，请稍候...</div>
+            <div class="image-preview" id="text-to-image-preview"></div>
+        </div>
+        
+        <div id="image-to-image" class="tab-content">
+            <div class="form-group">
+                <label for="input-image">输入图像</label>
+                <input type="file" id="input-image" accept="image/*" onchange="previewInputImage(this)">
+            </div>
+            <div class="form-group">
+                <label for="i2i-prompt">提示词</label>
+                <textarea id="i2i-prompt" placeholder="请输入提示词..."></textarea>
+            </div>
+            <div class="form-group">
+                <label for="strength">转换强度: <span id="strength-value">0.75</span></label>
+                <input type="range" id="strength" class="slider" min="0" max="1" value="0.75" step="0.01" oninput="updateValue('strength-value', this.value)">
+            </div>
+            <button onclick="convertImage()">转换图像</button>
+            <div class="loading" id="image-to-image-loading">正在转换图像，请稍候...</div>
+            <div class="image-preview" id="image-to-image-preview"></div>
+        </div>
+    </div>
+
+    <script>
+        const COMFYUI_SERVER = 'http://223.104.3.2:8188';
+
+        function switchTab(tabId) {
+            // 隐藏所有标签页内容
+            document.querySelectorAll('.tab-content').forEach(content => {
+                content.classList.remove('active');
+            });
+            // 取消所有标签的激活状态
+            document.querySelectorAll('.tab').forEach(tab => {
+                tab.classList.remove('active');
+            });
+            // 显示选中的标签页内容
+            document.getElementById(tabId).classList.add('active');
+            // 激活选中的标签
+            event.target.classList.add('active');
+        }
+
+        function updateValue(elementId, value) {
+            document.getElementById(elementId).textContent = value;
+        }
+
+        function showLoading(tabId, show) {
+            const loading = document.getElementById(`${tabId}-loading`);
+            if (show) {
+                loading.classList.add('active');
+            } else {
+                loading.classList.remove('active');
+            }
+        }
+
+        function previewInputImage(input) {
+            if (input.files && input.files[0]) {
+                const reader = new FileReader();
+                reader.onload = function(e) {
+                    const preview = document.getElementById('image-to-image-preview');
+                    preview.innerHTML = `<img src="${e.target.result}" alt="输入图像预览">`;
+                }
+                reader.readAsDataURL(input.files[0]);
+            }
+        }
+
+        async function generateImage() {
+            const prompt = document.getElementById('prompt').value;
+            const negativePrompt = document.getElementById('negative-prompt').value;
+            const steps = parseInt(document.getElementById('steps').value);
+            const guidance = parseFloat(document.getElementById('guidance').value);
+
+            showLoading('text-to-image', true);
+
+            try {
+                // 创建工作流
+                const workflow = {
+                    "5": {
+                        "class_type": "EmptyLatentImage",
+                        "inputs": {
+                            "width": 1024,
+                            "height": 1024,
+                            "batch_size": 1
+                        }
+                    },
+                    "22": {
+                        "class_type": "BasicGuider",
+                        "inputs": {
+                            "model": ["12", 0],
+                            "conditioning": ["6", 0]
+                        }
+                    },
+                    "8": {
+                        "class_type": "VAEDecode",
+                        "inputs": {
+                            "samples": ["13", 0],
+                            "vae": ["10", 0]
+                        }
+                    },
+                    "25": {
+                        "class_type": "RandomNoise",
+                        "inputs": {
+                            "width": 1024,
+                            "height": 1024,
+                            "batch_size": 1,
+                            "noise_seed": 782619153058034
+                        }
+                    },
+                    "11": {
+                        "class_type": "DualCLIPLoader",
+                        "inputs": {
+                            "clip_name1": "t5xxl_fp16.safetensors",
+                            "clip_name2": "clip_l.safetensors",
+                            "type": "flux",
+                            "mode": "default"
+                        }
+                    },
+                    "10": {
+                        "class_type": "VAELoader",
+                        "inputs": {
+                            "vae_name": "ae.sft"
+                        }
+                    },
+                    "9": {
+                        "class_type": "SaveImage",
+                        "inputs": {
+                            "images": ["8", 0],
+                            "filename_prefix": "ComfyUI"
+                        }
+                    },
+                    "17": {
+                        "class_type": "BasicScheduler",
+                        "inputs": {
+                            "model": ["12", 0],
+                            "scheduler": "normal",
+                            "steps": steps,
+                            "denoise": 1
+                        }
+                    },
+                    "16": {
+                        "class_type": "KSamplerSelect",
+                        "inputs": {
+                            "sampler_name": "euler"
+                        }
+                    },
+                    "13": {
+                        "class_type": "SamplerCustomAdvanced",
+                        "inputs": {
+                            "noise": ["25", 0],
+                            "guider": ["22", 0],
+                            "sampler": ["16", 0],
+                            "sigmas": ["17", 0],
+                            "latent_image": ["5", 0]
+                        }
+                    },
+                    "6": {
+                        "class_type": "CLIPTextEncode",
+                        "inputs": {
+                            "clip": ["11", 0],
+                            "text": prompt
+                        }
+                    },
+                    "12": {
+                        "class_type": "UNETLoader",
+                        "inputs": {
+                            "unet_name": "FLUX\\flux1-dev.sft",
+                            "weight_dtype": "fp8_e4m3fn"
+                        }
+                    }
+                };
+
+                console.log("准备发送工作流到服务器:", COMFYUI_SERVER);
+                console.log("工作流配置:", JSON.stringify(workflow, null, 2));
+
+                // 发送工作流到 ComfyUI
+                const response = await fetch(`${COMFYUI_SERVER}/api/queue`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ prompt: workflow })
+                });
+
+                console.log("服务器响应状态:", response.status);
+                
+                if (!response.ok) {
+                    const errorText = await response.text();
+                    console.error("服务器错误响应:", errorText);
+                    throw new Error(`提交工作流失败: ${errorText}`);
+                }
+
+                const responseData = await response.json();
+                console.log("服务器响应数据:", responseData);
+                
+                const { prompt_id } = responseData;
+                console.log("工作流已提交，ID:", prompt_id);
+
+                // 等待生成完成
+                let imageUrl = null;
+                let attempts = 0;
+                const maxAttempts = 60; // 最多等待30秒
+                
+                while (!imageUrl && attempts < maxAttempts) {
+                    attempts++;
+                    console.log(`尝试获取结果 (${attempts}/${maxAttempts})...`);
+                    
+                    const historyResponse = await fetch(`${COMFYUI_SERVER}/api/history/${prompt_id}`);
+                    if (!historyResponse.ok) {
+                        console.error("获取历史记录失败:", await historyResponse.text());
+                        throw new Error('获取历史记录失败');
+                    }
+
+                    const history = await historyResponse.json();
+                    console.log("历史记录:", history);
+                    
+                    if (prompt_id in history && history[prompt_id].outputs) {
+                        const imageData = history[prompt_id].outputs["9"].images[0];
+                        imageUrl = `${COMFYUI_SERVER}/view?filename=${imageData.filename}`;
+                        console.log("找到图像URL:", imageUrl);
+                        break;
+                    }
+
+                    await new Promise(resolve => setTimeout(resolve, 500));
+                }
+                
+                if (!imageUrl) {
+                    throw new Error('生成超时，请检查服务器状态');
+                }
+
+                // 显示生成的图像
+                const preview = document.getElementById('text-to-image-preview');
+                preview.innerHTML = `<img src="${imageUrl}" alt="生成的图像">`;
+            } catch (error) {
+                alert('生成图像时出错：' + error.message);
+                console.error('错误详情：', error);
+            } finally {
+                showLoading('text-to-image', false);
+            }
+        }
+
+        async function convertImage() {
+            const inputImage = document.getElementById('input-image').files[0];
+            const prompt = document.getElementById('i2i-prompt').value;
+            const strength = parseFloat(document.getElementById('strength').value);
+
+            if (!inputImage) {
+                alert('请选择输入图像');
+                return;
+            }
+
+            showLoading('image-to-image', true);
+
+            try {
+                // 将图像转换为 base64
+                const base64Image = await new Promise((resolve) => {
+                    const reader = new FileReader();
+                    reader.onload = (e) => resolve(e.target.result.split(',')[1]);
+                    reader.readAsDataURL(inputImage);
+                });
+
+                // 创建工作流
+                const workflow = {
+                    "5": {
+                        "class_type": "EmptyLatentImage",
+                        "inputs": {
+                            "width": 1024,
+                            "height": 1024,
+                            "batch_size": 1
+                        }
+                    },
+                    "22": {
+                        "class_type": "BasicGuider",
+                        "inputs": {
+                            "model": ["12", 0],
+                            "conditioning": ["6", 0]
+                        }
+                    },
+                    "8": {
+                        "class_type": "VAEDecode",
+                        "inputs": {
+                            "samples": ["13", 0],
+                            "vae": ["10", 0]
+                        }
+                    },
+                    "25": {
+                        "class_type": "RandomNoise",
+                        "inputs": {
+                            "width": 1024,
+                            "height": 1024,
+                            "batch_size": 1
+                        }
+                    },
+                    "11": {
+                        "class_type": "DualCLIPLoader",
+                        "inputs": {
+                            "clip_name1": "t5xxl_fp16.safetensors",
+                            "clip_name2": "clip_l.safetensors",
+                            "type": "flux",
+                            "mode": "default"
+                        }
+                    },
+                    "10": {
+                        "class_type": "VAELoader",
+                        "inputs": {
+                            "vae_name": "ae.sft"
+                        }
+                    },
+                    "9": {
+                        "class_type": "SaveImage",
+                        "inputs": {
+                            "images": ["8", 0],
+                            "filename_prefix": "ComfyUI"
+                        }
+                    },
+                    "17": {
+                        "class_type": "BasicScheduler",
+                        "inputs": {
+                            "model": ["12", 0],
+                            "scheduler": "normal",
+                            "steps": 20,
+                            "denoise": strength
+                        }
+                    },
+                    "16": {
+                        "class_type": "KSamplerSelect",
+                        "inputs": {
+                            "sampler_name": "euler"
+                        }
+                    },
+                    "13": {
+                        "class_type": "SamplerCustomAdvanced",
+                        "inputs": {
+                            "noise": ["25", 0],
+                            "guider": ["22", 0],
+                            "sampler": ["16", 0],
+                            "sigmas": ["17", 0],
+                            "latent_image": ["5", 0]
+                        }
+                    },
+                    "6": {
+                        "class_type": "CLIPTextEncode",
+                        "inputs": {
+                            "clip": ["11", 0],
+                            "text": prompt
+                        }
+                    },
+                    "12": {
+                        "class_type": "UNETLoader",
+                        "inputs": {
+                            "unet_name": "FLUX\\flux1-dev.sft",
+                            "weight_dtype": "fp8_e4m3fn"
+                        }
+                    }
+                };
+
+                // 发送工作流到 ComfyUI
+                const response = await fetch(`${COMFYUI_SERVER}/api/queue`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ prompt: workflow })
+                });
+
+                if (!response.ok) {
+                    throw new Error('提交工作流失败');
+                }
+
+                const { prompt_id } = await response.json();
+
+                // 等待生成完成
+                let imageUrl = null;
+                while (!imageUrl) {
+                    const historyResponse = await fetch(`${COMFYUI_SERVER}/api/history/${prompt_id}`);
+                    if (!historyResponse.ok) {
+                        throw new Error('获取历史记录失败');
+                    }
+
+                    const history = await historyResponse.json();
+                    if (prompt_id in history && history[prompt_id].outputs) {
+                        const imageData = history[prompt_id].outputs["9"].images[0];
+                        imageUrl = `${COMFYUI_SERVER}/view?filename=${imageData.filename}`;
+                        break;
+                    }
+
+                    await new Promise(resolve => setTimeout(resolve, 500));
+                }
+
+                // 显示生成的图像
+                const preview = document.getElementById('image-to-image-preview');
+                preview.innerHTML = `<img src="${imageUrl}" alt="转换后的图像">`;
+            } catch (error) {
+                alert('转换图像时出错：' + error.message);
+            } finally {
+                showLoading('image-to-image', false);
+            }
+        }
+    </script>
+</body>
+</html> 

@@ -1,0 +1,61 @@
+{
+    "3": {
+        "inputs": {
+            "text": "a beautiful sunset over mountains, high quality, detailed",
+            "clip": ["4", 0]
+        },
+        "class_type": "CLIPTextEncode"
+    },
+    "4": {
+        "inputs": {
+            "ckpt_name": "sd_xl_base_1.0.safetensors"
+        },
+        "class_type": "CheckpointLoaderSimple"
+    },
+    "5": {
+        "inputs": {
+            "width": 1024,
+            "height": 768,
+            "batch_size": 1
+        },
+        "class_type": "EmptyLatentImage"
+    },
+    "6": {
+        "inputs": {
+            "samples": ["5", 0],
+            "vae": ["4", 2],
+            "positive": ["3", 0],
+            "negative": ["7", 0],
+            "latent_image": ["5", 0],
+            "denoise": 0.75,
+            "model": ["4", 0],
+            "sampler_name": "euler",
+            "scheduler": "normal",
+            "seed": 8569857,
+            "steps": 20,
+            "cfg": 7
+        },
+        "class_type": "KSampler"
+    },
+    "7": {
+        "inputs": {
+            "text": "ugly, blurry, low quality, distorted",
+            "clip": ["4", 0]
+        },
+        "class_type": "CLIPTextEncode"
+    },
+    "8": {
+        "inputs": {
+            "samples": ["6", 0],
+            "vae": ["4", 2]
+        },
+        "class_type": "VAEDecode"
+    },
+    "9": {
+        "inputs": {
+            "filename_prefix": "ComfyUI",
+            "images": ["8", 0]
+        },
+        "class_type": "SaveImage"
+    }
+} 

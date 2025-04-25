@@ -36,22 +36,35 @@ __pycache__/
 *.so
 .Python
 env/
-venv/
-.env
-.venv
-*.db
-*.sqlite3
-.pytest_cache/
-.coverage
-htmlcov/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
 
-# Python
-__pycache__/
-*.py[cod]
-*$py.class
-*.so
-.Python
-env/
+# Virtual Environment
 venv/
+ENV/
 .env
-.venv 
+
+# Logs
+*.log
+
+# Local development settings
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# Gradio
+flagged/ 
