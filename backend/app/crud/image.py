@@ -33,8 +33,6 @@ async def generate_text_to_image(prompt: str, model: str = "flux-t2v") -> str:
         if not prompt or prompt.strip() == "":
             raise Exception("提示词不能为空")
             
-        logger.info(f"开始生成图片，提示词: {prompt}，模型: {model}")
-        
         if model.lower() == "flux-t2v":
             # 使用新的图像生成服务
             generator = ImageGenerator(host="101.126.152.137", port=8188)
@@ -61,7 +59,7 @@ async def generate_text_to_image(prompt: str, model: str = "flux-t2v") -> str:
             
     except Exception as e:
         logger.error(f"生成图片失败: {str(e)}")
-        raise Exception(f"生成图片失败: {str(e)}")
+        raise
 
 async def generate_image_to_image(prompt: str, image_data: str, model: str = "flux-t2v") -> str:
     """图生图功能，支持多种模型"""
@@ -74,8 +72,6 @@ async def generate_image_to_image(prompt: str, image_data: str, model: str = "fl
         if not image_data or image_data.strip() == "":
             raise Exception("图像数据不能为空")
             
-        logger.info(f"开始生成图片变体，提示词: {prompt}，模型: {model}")
-        
         if model.lower() == "flux-t2v":
             # 使用新的图像生成服务
             generator = ImageGenerator(host="101.126.152.137", port=8188)
@@ -111,7 +107,7 @@ async def generate_image_to_image(prompt: str, image_data: str, model: str = "fl
             
     except Exception as e:
         logger.error(f"生成图片变体失败: {str(e)}")
-        raise Exception(f"生成图片变体失败: {str(e)}")
+        raise
 
 def create_image(db: Session, user_id: int, prompt: str, image_url: str, is_variation: bool = False):
     """创建图像记录"""
