@@ -18,6 +18,20 @@ sys.path.append(str(Path(__file__).parent))
 from app.utils.comfyui_client import ComfyUIClient
 import time
 
+# 获取当前文件所在目录
+CURRENT_DIR = Path(__file__).parent
+STATIC_DIR = CURRENT_DIR / "static"
+
+# 加载logo并转换为base64
+def get_logo_base64():
+    logo_path = STATIC_DIR / "pegasus_logo.png"  # 修改为.png文件
+    if logo_path.exists():
+        with open(logo_path, "rb") as f:
+            return f"data:image/png;base64,{base64.b64encode(f.read()).decode()}"
+    return "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0MCA0MCI+PHJlY3Qgd2lkdGg9IjQwIiBoZWlnaHQ9IjQwIiBmaWxsPSIjMWY2ZmViIi8+PHRleHQgeD0iMjAiIHk9IjIwIiBmb250LWZhbWlseT0iQXJpYWwiIGZvbnQtc2l6ZT0iMjQiIGZpbGw9IndoaXRlIiB0ZXh0LWFuY2hvcj0ibWlkZGxlIiBkeT0iLjNlbSI+UDwvdGV4dD48L3N2Zz4="
+
+LOGO_BASE64 = get_logo_base64()
+
 def translate_and_expand_prompt(prompt: str) -> str:
     """将提示词扩写成标准格式"""
     # 扩写成标准格式
@@ -56,17 +70,17 @@ def translate_negative_prompt(negative_prompt: str) -> str:
 async def generate_image(prompt, negative_prompt, steps, guidance):
     try:
         logger.info("开始生成图像...")
-        yield None, "开始生成图像..."
+        yield None, 0, "正在初始化..."
         
         # 翻译并扩写提示词
         translated_prompt = translate_and_expand_prompt(prompt)
         translated_negative_prompt = translate_negative_prompt(negative_prompt)
         logger.info(f"处理后的提示词: {translated_prompt[:100]}...")
-        yield None, "提示词处理完成，准备生成..."
+        yield None, 0.1, "正在处理提示词..."
         
         # 生成简短的文件名
         timestamp = int(time.time())
-        short_id = str(timestamp)[-6:]  # 只使用时间戳的后6位
+        short_id = str(timestamp)[-6:]
         
         # 创建工作流
         workflow = {
@@ -161,38 +175,38 @@ async def generate_image(prompt, negative_prompt, steps, guidance):
             }
         }
         
-        # 创建ComfyUI客户端，使用正确的服务器地址
+        # 创建ComfyUI客户端
         client = ComfyUIClient(host="101.126.152.137", port=8188)
-        yield None, "正在连接ComfyUI服务器..."
+        yield None, 0.2, "正在连接ComfyUI服务器..."
         
         # 检查连接
         if not await client.check_connection():
-            yield None, "无法连接到ComfyUI服务器，请确保服务器已启动"
+            yield None, 0, "连接服务器失败，请重试"
             return
             
-        yield None, "连接成功，开始执行工作流..."
+        yield None, 0.3, "正在准备生成参数..."
         
         # 执行工作流
         try:
-            # 生成唯一的client_id
-            client_id = f"p_{short_id}"  # 使用简短 client_id
+            client_id = f"p_{short_id}"
             
             # 提交工作流
             prompt_id = await client.submit_prompt(workflow, client_id)
             if not prompt_id:
-                yield None, "提交工作流失败"
+                yield None, 0, "提交工作流失败，请重试"
                 return
                 
-            yield None, "工作流已提交，等待执行..."
+            yield None, 0.4, "正在生成图像..."
             
             # 连接WebSocket
             if not await client.connect_websocket(client_id):
-                yield None, "WebSocket连接失败"
+                yield None, 0, "连接WebSocket失败，请重试"
                 return
                 
             # 等待执行完成
             last_status_time = time.time()
             last_progress = 0
+            current_progress = 0.4
             
             while True:
                 result = await client.listen_websocket()
@@ -205,48 +219,51 @@ async def generate_image(prompt, negative_prompt, steps, guidance):
                         total_steps = progress.get("max", 0)
                         if total_steps > 0:
                             percentage = (current_step / total_steps) * 100
+                            current_progress = 0.4 + (percentage / 100 * 0.5)
                             if percentage > last_progress:
-                                yield None, f"生成进度: {percentage:.1f}% ({current_step}/{total_steps})"
+                                yield None, current_progress, f"正在生成图像... {percentage:.1f}% ({current_step}/{total_steps})"
                                 last_progress = percentage
                             last_status_time = current_time
                             
-                    elif result.get("type") == "executing" and result.get("data", {}).get("node") is None:
-                        yield None, "执行完成，正在获取图像..."
-                        await asyncio.sleep(1)
-                        image_url = await client.get_latest_image()
-                        if image_url:
-                            # 获取图像数据
-                            async with client.session.get(image_url) as response:
-                                if response.status == 200:
-                                    image_data = await response.read()
-                                    # 将图片保存到系统临时目录
-                                    temp_dir = tempfile.gettempdir()
-                                    temp_file = os.path.join(temp_dir, f"img_{short_id}.png")
-                                    with open(temp_file, "wb") as f:
-                                        f.write(image_data)
-                                    # 返回临时文件路径
-                                    yield temp_file, "生成完成！"
-                                    return
-                                else:
-                                    yield None, f"获取图像失败，状态码: {response.status}"
-                        else:
-                            yield None, "未能获取到生成的图像"
-                            return
-                            
+                    elif result.get("type") == "executing":
+                        node_id = result.get("data", {}).get("node")
+                        if node_id:
+                            node_name = workflow.get(node_id, {}).get("class_type", "未知节点")
+                            yield None, current_progress, f"正在执行: {node_name}"
+                        elif result.get("data", {}).get("node") is None:
+                            yield None, 0.9, "正在保存图像..."
+                            await asyncio.sleep(1)
+                            image_url = await client.get_latest_image()
+                            if image_url:
+                                async with client.session.get(image_url) as response:
+                                    if response.status == 200:
+                                        image_data = await response.read()
+                                        temp_dir = tempfile.gettempdir()
+                                        temp_file = os.path.join(temp_dir, f"img_{short_id}.png")
+                                        with open(temp_file, "wb") as f:
+                                            f.write(image_data)
+                                        yield temp_file, 1.0, "生成完成！"
+                                        return
+                                    else:
+                                        yield None, 0, "保存图像失败，请重试"
+                            else:
+                                yield None, 0, "获取图像失败，请重试"
+                                return
+                
                 # 超时检查
                 if current_time - last_status_time > 30:
-                    yield None, "生成超时，请重试"
+                    yield None, 0, "生成超时，请重试"
                     return
                     
                 await asyncio.sleep(0.1)
                 
         except Exception as e:
             logger.error(f"工作流执行错误: {str(e)}")
-            yield None, f"生成图像失败: {str(e)}"
+            yield None, 0, f"生成失败：{str(e)}"
             
     except Exception as e:
         logger.error(f"生成图像时发生错误: {str(e)}")
-        yield None, f"生成图像失败: {str(e)}"
+        yield None, 0, f"生成失败：{str(e)}"
 
 async def get_latest_image(client):
     """获取最新生成的图像"""
@@ -259,12 +276,7 @@ async def get_latest_image(client):
                     if latest_output:
                         node_id = list(latest_output.keys())[0]
                         image_data = latest_output[node_id]["images"][0]
-                        async with client.session.get(f"{client.base_url}/view?filename={image_data['filename']}") as img_response:
-                            if img_response.status == 200:
-                                image_bytes = await img_response.read()
-                                return f"data:image/png;base64,{base64.b64encode(image_bytes).decode()}"
-                            else:
-                                logger.warning(f"获取图像失败，状态码: {img_response.status}")
+                        return f"{client.base_url}/view?filename={image_data['filename']}"
                 else:
                     logger.warning("未找到图像输出")
             else:
@@ -276,7 +288,7 @@ async def get_latest_image(client):
 async def generate_variation(image, prompt, negative_prompt, strength, steps, guidance):
     try:
         if image is None:
-            yield None, "请先上传图片！"
+            yield None, 0, "请先上传图片！"
             return
         
         # 翻译并扩写提示词
@@ -284,11 +296,16 @@ async def generate_variation(image, prompt, negative_prompt, strength, steps, gu
         translated_negative_prompt = translate_negative_prompt(negative_prompt)
         logger.info(f"翻译后的提示词: {translated_prompt}")
         logger.info(f"翻译后的反向提示词: {translated_negative_prompt}")
+        yield None, 0.1, "正在处理提示词..."
         
         # 将图片转换为base64
         buffered = io.BytesIO()
         image.save(buffered, format="PNG")
         img_str = base64.b64encode(buffered.getvalue()).decode()
+        
+        # 生成简短的文件名
+        timestamp = int(time.time())
+        short_id = str(timestamp)[-6:]
         
         # 创建工作流
         workflow = {
@@ -338,7 +355,7 @@ async def generate_variation(image, prompt, negative_prompt, strength, steps, gu
                 "class_type": "SaveImage",
                 "inputs": {
                     "images": ["8", 0],
-                    "filename_prefix": "ComfyUI"
+                    "filename_prefix": f"img_{short_id}"  # 使用简短的文件名前缀
                 }
             },
             "17": {
@@ -383,17 +400,20 @@ async def generate_variation(image, prompt, negative_prompt, strength, steps, gu
         }
         
         logger.info("正在连接ComfyUI服务器...")
+        yield None, 0.2, "正在连接ComfyUI服务器..."
+        
         async with ComfyUIClient(host="101.126.152.137", port=8188) as client:
             logger.info("提交工作流...")
             prompt_id = await client.submit_prompt(workflow)
             logger.info(f"工作流已提交，ID: {prompt_id}")
-            yield None, "工作流已提交，正在生成图像..."
+            yield None, 0.3, "工作流已提交，正在生成图像..."
             
             logger.info("连接WebSocket...")
             await client.connect_websocket()
             
             last_status_time = time.time()
             last_progress = 0
+            current_progress = 0.3
             
             while True:
                 result = await client.listen_websocket()
@@ -406,48 +426,68 @@ async def generate_variation(image, prompt, negative_prompt, strength, steps, gu
                         total_steps = progress.get("max", 0)
                         if total_steps > 0:
                             percentage = (current_step / total_steps) * 100
+                            current_progress = 0.3 + (percentage / 100 * 0.6)
                             if percentage > last_progress:
                                 logger.info(f"生成进度: {percentage:.1f}%")
-                                yield None, f"生成进度: {percentage:.1f}% ({current_step}/{total_steps})"
+                                yield None, current_progress, f"正在生成图像... {percentage:.1f}% ({current_step}/{total_steps})"
                                 last_progress = percentage
                             last_status_time = current_time
                     
                     elif result.get("type") == "executing":
-                        if result.get("data", {}).get("node") is None:
+                        node_id = result.get("data", {}).get("node")
+                        if node_id:
+                            node_name = workflow.get(node_id, {}).get("class_type", "未知节点")
+                            yield None, current_progress, f"正在执行: {node_name}"
+                        elif result.get("data", {}).get("node") is None:
                             logger.info("执行完成，等待1秒后获取图像...")
+                            yield None, 0.9, "执行完成，正在获取图像..."
                             await asyncio.sleep(1)
                             image_url = await get_latest_image(client)
                             if image_url:
-                                yield image_url, "生成完成！"
-                                return
+                                # 获取图像数据
+                                async with client.session.get(image_url) as response:
+                                    if response.status == 200:
+                                        image_data = await response.read()
+                                        # 将图片保存到系统临时目录
+                                        temp_dir = tempfile.gettempdir()
+                                        temp_file = os.path.join(temp_dir, f"img_{short_id}.png")
+                                        with open(temp_file, "wb") as f:
+                                            f.write(image_data)
+                                        # 返回临时文件路径
+                                        yield temp_file, 1.0, "生成完成！"
+                                        return
+                                    else:
+                                        yield None, 0, f"获取图像失败，状态码: {response.status}"
                             else:
                                 logger.warning("未能获取到图像，继续等待...")
-                    
-                    elif result.get("type") == "status":
-                        status = result.get("data", {}).get("status", {})
-                        queue_remaining = status.get("exec_info", {}).get("queue_remaining", 1)
-                        if queue_remaining == 0:
-                            logger.info("队列为空，检查结果...")
-                            image_url = await get_latest_image(client)
-                            if image_url:
-                                yield image_url, "生成完成！"
-                                return
                 
                 # 超时检查
                 if current_time - last_status_time > 30:
                     logger.warning("等待超时，尝试最后一次获取结果...")
                     image_url = await get_latest_image(client)
                     if image_url:
-                        yield image_url, "生成完成！"
+                        # 获取图像数据
+                        async with client.session.get(image_url) as response:
+                            if response.status == 200:
+                                image_data = await response.read()
+                                # 将图片保存到系统临时目录
+                                temp_dir = tempfile.gettempdir()
+                                temp_file = os.path.join(temp_dir, f"img_{short_id}.png")
+                                with open(temp_file, "wb") as f:
+                                    f.write(image_data)
+                                # 返回临时文件路径
+                                yield temp_file, 1.0, "生成完成！"
+                            else:
+                                yield None, 0, f"获取图像失败，状态码: {response.status}"
                     else:
-                        yield None, "生成超时，请重试"
+                        yield None, 0, "生成超时，请重试"
                     return
                 
                 await asyncio.sleep(0.1)
                 
     except Exception as e:
         logger.error(f"发生错误: {str(e)}")
-        yield None, f"生成失败：{str(e)}"
+        yield None, 0, f"生成失败：{str(e)}"
 
 with gr.Blocks(title="PegaAI", css="""
     footer {display: none}
@@ -472,12 +512,62 @@ with gr.Blocks(title="PegaAI", css="""
     .logo-container h1 {
         margin: 0;
     }
+    /* 自定义进度条样式 */
+    .progress-container {
+        margin: 10px 0;
+    }
+    .progress-container .slider-container {
+        margin: 0;
+    }
+    .progress-container .slider-container input[type="range"] {
+        height: 6px;
+        background: #f0f0f0;
+        border-radius: 3px;
+    }
+    .progress-container .slider-container input[type="range"]::-webkit-slider-thumb {
+        display: none;
+    }
+    .progress-container .slider-container input[type="range"]::-moz-range-thumb {
+        display: none;
+    }
+    .progress-container .slider-container input[type="range"]::-ms-thumb {
+        display: none;
+    }
+    .progress-container .slider-container input[type="range"]::-webkit-slider-runnable-track {
+        background: linear-gradient(90deg, #ff6b00 var(--value-percent), #f0f0f0 var(--value-percent));
+        border-radius: 3px;
+    }
+    .progress-container .slider-container input[type="range"]::-moz-range-track {
+        background: linear-gradient(90deg, #ff6b00 var(--value-percent), #f0f0f0 var(--value-percent));
+        border-radius: 3px;
+    }
+    .progress-container .slider-container input[type="range"]::-ms-track {
+        background: linear-gradient(90deg, #ff6b00 var(--value-percent), #f0f0f0 var(--value-percent));
+        border-radius: 3px;
+    }
+    .progress-container .slider-container button {
+        display: none !important;
+    }
+    .progress-container .slider-container input[type="number"] {
+        width: 60px !important;
+        text-align: right !important;
+    }
+    .progress-container .slider-container label {
+        display: none !important;
+    }
+    /* 状态文本样式 */
+    .status-text {
+        font-size: 14px;
+        color: #666;
+        margin-top: 5px;
+        min-height: 20px;
+    }
 """) as demo:
     with gr.Row():
         with gr.Column(scale=1):
-            gr.HTML("""
+            gr.HTML(f"""
                 <div class="logo-container">
-                    <img src="/file/static/logo.jpg" width="40" height="40" alt="PegaAI Logo">
+                    <img src="{get_logo_base64()}" width="40" height="40" alt="PegaAI Logo">
                     <h1>PegaAI</h1>
                 </div>
             """)
@@ -512,7 +602,20 @@ with gr.Blocks(title="PegaAI", css="""
                             gen_button = gr.Button("生成", variant="primary")
                         with gr.Column(scale=1):
                             clear_button = gr.Button("清除")
-                    gen_output = gr.Textbox(label="生成状态")
+                    gen_progress = gr.Slider(
+                        minimum=0,
+                        maximum=1,
+                        value=0,
+                        label="",
+                        interactive=False,
+                        elem_classes="progress-container"
+                    )
+                    gen_status = gr.Textbox(
+                        label="",
+                        value="",
+                        interactive=False,
+                        elem_classes="status-text"
+                    )
                 with gr.Column():
                     output_image = gr.Image(label="生成结果")
         
@@ -540,27 +643,64 @@ with gr.Blocks(title="PegaAI", css="""
                         var_steps = gr.Slider(minimum=1, maximum=100, value=20, step=1, label="推理步数")
                         var_guidance = gr.Slider(minimum=1, maximum=20, value=7, step=0.1, label="提示词引导系数")
                     var_button = gr.Button("生成变体", variant="primary")
-                    var_output = gr.Textbox(label="生成状态")
+                    var_progress = gr.Slider(
+                        minimum=0,
+                        maximum=1,
+                        value=0,
+                        label="",
+                        interactive=False,
+                        elem_classes="progress-container"
+                    )
+                    var_status = gr.Textbox(
+                        label="",
+                        value="",
+                        interactive=False,
+                        elem_classes="status-text"
+                    )
                 with gr.Column():
                     var_image = gr.Image(label="生成结果")
     
-    # 绑定事件
+    # 添加JavaScript代码来更新进度条样式
+    demo.load(js="""
+        function updateProgressStyle(slider) {
+            const value = parseFloat(slider.value);
+            const percentage = Math.round(value * 100);
+            slider.style.setProperty('--value-percent', percentage + '%');
+            
+            const numberInput = slider.parentElement.querySelector('input[type="number"]');
+            if (numberInput) {
+                numberInput.value = percentage + '%';
+            }
+        }
+        
+        // 监听进度条值的变化
+        document.querySelectorAll('.progress-container input[type="range"]').forEach(slider => {
+            slider.addEventListener('input', (e) => {
+                updateProgressStyle(e.target);
+            });
+            
+            // 初始化进度条样式
+            updateProgressStyle(slider);
+        });
+    """)
+
+    # 修改事件绑定
     gen_button.click(
         fn=generate_image,
         inputs=[prompt, negative_prompt, steps, guidance],
-        outputs=[output_image, gen_output],
+        outputs=[output_image, gen_progress, gen_status],
         api_name="generate"
     )
     var_button.click(
         fn=generate_variation,
         inputs=[input_image, var_prompt, var_negative_prompt, var_strength, var_steps, var_guidance],
-        outputs=[var_image, var_output],
+        outputs=[var_image, var_progress, var_status],
         api_name="variation"
     )
     clear_button.click(
-        fn=lambda: (None, ""),
+        fn=lambda: (None, 0, ""),
         inputs=[],
-        outputs=[output_image, gen_output],
+        outputs=[output_image, gen_progress, gen_status],
         api_name="clear"
     )
 
