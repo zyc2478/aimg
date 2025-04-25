@@ -6,6 +6,8 @@ from typing import Dict, Any, Optional
 import logging
 import time
 
+# 设置日志级别
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 class ComfyUIClient:
@@ -50,10 +52,10 @@ class ComfyUIClient:
         
         try:
             self.ws = await self.session.ws_connect(ws_url)
-            print(f"WebSocket连接成功: {ws_url}")
+            logger.info(f"WebSocket连接成功: {ws_url}")
             return True
         except Exception as e:
-            print(f"WebSocket连接失败: {str(e)}")
+            logger.error(f"WebSocket连接失败: {str(e)}")
             return False
             
     async def submit_prompt(self, workflow, client_id=None):
@@ -71,16 +73,16 @@ class ComfyUIClient:
                     result = await response.json()
                     return result.get("prompt_id")
                 else:
-                    print(f"提交工作流失败，状态码: {response.status}")
+                    logger.error(f"提交工作流失败，状态码: {response.status}")
                     return None
         except Exception as e:
-            print(f"提交工作流时出错: {str(e)}")
+            logger.error(f"提交工作流时出错: {str(e)}")
             return None
             
     async def listen_websocket(self):
         """监听WebSocket消息"""
         if not self.ws:
-            print("WebSocket未连接")
+            logger.error("WebSocket未连接")
             return None
         
         try:
@@ -88,13 +90,13 @@ class ComfyUIClient:
             if msg.type == aiohttp.WSMsgType.TEXT:
                 return json.loads(msg.data)
             elif msg.type == aiohttp.WSMsgType.CLOSED:
-                print("WebSocket连接已关闭")
+                logger.error("WebSocket连接已关闭")
                 return {"type": "error", "error": "WebSocket closed"}
             elif msg.type == aiohttp.WSMsgType.ERROR:
-                print("WebSocket错误")
+                logger.error("WebSocket错误")
                 return {"type": "error", "error": str(msg.data)}
         except Exception as e:
-            print(f"接收WebSocket消息时出错: {str(e)}")
+            logger.error(f"接收WebSocket消息时出错: {str(e)}")
             return {"type": "error", "error": str(e)}
         
         return None

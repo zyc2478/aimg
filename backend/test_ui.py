@@ -6,6 +6,12 @@ import io
 import json
 import sys
 from pathlib import Path
+import logging
+
+# 设置日志级别
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
 sys.path.append(str(Path(__file__).parent))
 from app.utils.comfyui_client import ComfyUIClient
 import time
@@ -95,11 +101,11 @@ def translate_negative_prompt(negative_prompt: str) -> str:
 
 async def generate_image(prompt, negative_prompt, steps, guidance):
     try:
-        print("开始生成图像...")
+        logger.info("开始生成图像...")
         # 翻译并扩写提示词
         translated_prompt = translate_and_expand_prompt(prompt)
         translated_negative_prompt = translate_negative_prompt(negative_prompt)
-        print(f"处理后的提示词: {translated_prompt[:100]}...")
+        logger.info(f"处理后的提示词: {translated_prompt[:100]}...")
         
         # 创建工作流
         workflow = {
@@ -193,19 +199,19 @@ async def generate_image(prompt, negative_prompt, steps, guidance):
             }
         }
         
-        print("正在连接ComfyUI服务器...")
-        async with ComfyUIClient(host="223.104.3.2", port=8188) as client:
+        logger.info("正在连接ComfyUI服务器...")
+        async with ComfyUIClient(host="101.126.152.137", port=8188) as client:
             client_id = f"pegaai_{int(time.time())}"  # 生成唯一的client_id
-            print(f"使用client_id: {client_id}")
+            logger.info(f"使用client_id: {client_id}")
             
-            print("提交工作流...")
+            logger.info("提交工作流...")
             prompt_id = await client.submit_prompt(workflow, client_id)
-            print(f"工作流已提交，ID: {prompt_id}")
+            logger.info(f"工作流已提交，ID: {prompt_id}")
             yield None, "工作流已提交，正在生成图像..."
             
-            print("连接WebSocket...")
+            logger.info("连接WebSocket...")
             await client.connect_websocket(client_id)
-            print("WebSocket已连接")
+            logger.info("WebSocket已连接")
             
             last_status_time = time.time()
             last_progress = 0
@@ -214,7 +220,6 @@ async def generate_image(prompt, negative_prompt, steps, guidance):
                 try:
                     result = await client.listen_websocket()
                     current_time = time.time()
-                    print(f"收到WebSocket消息: {result}")
                     
                     if isinstance(result, dict):
                         if result.get("type") == "progress":
@@ -224,38 +229,38 @@ async def generate_image(prompt, negative_prompt, steps, guidance):
                             if total_steps > 0:
                                 percentage = (current_step / total_steps) * 100
                                 if percentage > last_progress:
-                                    print(f"生成进度: {percentage:.1f}%")
+                                    logger.info(f"生成进度: {percentage:.1f}%")
                                     yield None, f"生成进度: {percentage:.1f}% ({current_step}/{total_steps})"
                                     last_progress = percentage
                                 last_status_time = current_time
                         
                         elif result.get("type") == "executing":
                             if result.get("data", {}).get("node") is None:
-                                print("执行完成，等待1秒后获取图像...")
+                                logger.info("执行完成，等待1秒后获取图像...")
                                 await asyncio.sleep(1)  # 等待确保图像已保存
                                 image_url = await get_latest_image(client)
                                 if image_url:
-                                    print("图像获取成功")
+                                    logger.info("图像获取成功")
                                     yield image_url, "生成完成！"
                                     return
                                 else:
-                                    print("未能获取到图像，继续等待...")
+                                    logger.warning("未能获取到图像，继续等待...")
                         
                         elif result.get("type") == "status":
                             status = result.get("data", {}).get("status", {})
                             queue_remaining = status.get("exec_info", {}).get("queue_remaining", 1)
-                            print(f"队列剩余: {queue_remaining}")
+                            logger.info(f"队列剩余: {queue_remaining}")
                             if queue_remaining == 0:
-                                print("队列为空，检查结果...")
+                                logger.info("队列为空，检查结果...")
                                 image_url = await get_latest_image(client)
                                 if image_url:
-                                    print("图像获取成功")
+                                    logger.info("图像获取成功")
                                     yield image_url, "生成完成！"
                                     return
                     
                     # 超时检查
                     if current_time - last_status_time > 30:
-                        print("等待超时，尝试最后一次获取结果...")
+                        logger.warning("等待超时，尝试最后一次获取结果...")
                         image_url = await get_latest_image(client)
                         if image_url:
                             yield image_url, "生成完成！"
@@ -264,43 +269,41 @@ async def generate_image(prompt, negative_prompt, steps, guidance):
                         return
                     
                 except Exception as e:
-                    print(f"处理WebSocket消息时出错: {str(e)}")
+                    logger.error(f"处理WebSocket消息时出错: {str(e)}")
                     yield None, f"生成出错：{str(e)}"
                     return
                 
                 await asyncio.sleep(0.1)
                 
     except Exception as e:
-        print(f"发生错误: {str(e)}")
+        logger.error(f"发生错误: {str(e)}")
         yield None, f"生成失败：{str(e)}"
 
 async def get_latest_image(client):
     """获取最新生成的图像"""
     try:
-        print("尝试获取最新图像...")
+        logger.info("尝试获取最新图像...")
         async with client.session.get(f"{client.base_url}/history") as response:
             if response.status == 200:
                 history = await response.json()
-                print(f"获取到历史记录: {history}")
                 if history:
                     latest_output = list(history.values())[-1]["outputs"]
                     if latest_output:
                         node_id = list(latest_output.keys())[0]
                         image_data = latest_output[node_id]["images"][0]
-                        print(f"找到图像: {image_data['filename']}")
+                        logger.info(f"找到图像: {image_data['filename']}")
                         async with client.session.get(f"{client.base_url}/view?filename={image_data['filename']}") as img_response:
                             if img_response.status == 200:
                                 image_bytes = await img_response.read()
-                                image_data = base64.b64encode(image_bytes).decode()
-                                return f"data:image/png;base64,{image_data}"
+                                return f"data:image/png;base64,{base64.b64encode(image_bytes).decode()}"
                             else:
-                                print(f"获取图像失败，状态码: {img_response.status}")
-                    else:
-                        print("未找到图像输出")
+                                logger.warning(f"获取图像失败，状态码: {img_response.status}")
                 else:
-                    print("历史记录为空")
+                    logger.warning("未找到图像输出")
+            else:
+                logger.warning("历史记录为空")
     except Exception as e:
-        print(f"获取图像时出错: {str(e)}")
+        logger.error(f"获取图像时出错: {str(e)}")
     return None
 
 async def generate_variation(image, prompt, negative_prompt, strength, steps, guidance):
@@ -312,8 +315,8 @@ async def generate_variation(image, prompt, negative_prompt, strength, steps, gu
         # 翻译并扩写提示词
         translated_prompt = translate_and_expand_prompt(prompt)
         translated_negative_prompt = translate_negative_prompt(negative_prompt)
-        print(f"翻译后的提示词: {translated_prompt}")
-        print(f"翻译后的反向提示词: {translated_negative_prompt}")
+        logger.info(f"翻译后的提示词: {translated_prompt}")
+        logger.info(f"翻译后的反向提示词: {translated_negative_prompt}")
         
         # 将图片转换为base64
         buffered = io.BytesIO()
@@ -412,26 +415,26 @@ async def generate_variation(image, prompt, negative_prompt, strength, steps, gu
             }
         }
         
-        print("正在连接ComfyUI服务器...")
+        logger.info("正在连接ComfyUI服务器...")
         # 使用异步客户端
-        async with ComfyUIClient(host="223.104.3.2", port=8188) as client:
+        async with ComfyUIClient(host="101.126.152.137", port=8188) as client:
             # 提交工作流
-            print("提交工作流...")
+            logger.info("提交工作流...")
             prompt_id = await client.submit_prompt(workflow)
-            print(f"工作流已提交，ID: {prompt_id}")
+            logger.info(f"工作流已提交，ID: {prompt_id}")
             yield None, "工作流已提交，正在生成图像..."
             
             # 连接WebSocket并等待结果
-            print("连接WebSocket...")
+            logger.info("连接WebSocket...")
             await client.connect_websocket()
-            print("WebSocket已连接")
+            logger.info("WebSocket已连接")
             
             # 监听进度
             while True:
-                print("等待WebSocket消息...")
+                logger.info("等待WebSocket消息...")
                 result = await client.listen_websocket()
                 if "type" in result:
-                    print(f"收到消息类型: {result['type']}")  # 只打印消息类型，不打印整个消息
+                    logger.info(f"收到消息类型: {result['type']}")
                 
                 if isinstance(result, dict):
                     if "type" in result and result["type"] == "progress":
@@ -440,10 +443,10 @@ async def generate_variation(image, prompt, negative_prompt, strength, steps, gu
                         total_steps = progress.get("max", 0)
                         if total_steps > 0:
                             percentage = (current_step / total_steps) * 100
-                            print(f"进度: {percentage:.1f}%")
+                            logger.info(f"进度: {percentage:.1f}%")
                             yield None, f"生成进度: {percentage:.1f}% ({current_step}/{total_steps})"
                     elif "type" in result and result["type"] == "executing" and result.get("data", {}).get("node") is None:
-                        print("生成完成，获取图像...")
+                        logger.info("生成完成，获取图像...")
                         try:
                             async with client.session.get(f"{client.base_url}/history") as response:
                                 if response.status == 200:
@@ -452,55 +455,54 @@ async def generate_variation(image, prompt, negative_prompt, strength, steps, gu
                                         latest_output = list(history.values())[-1]["outputs"]
                                         if latest_output:
                                             image_data = latest_output[list(latest_output.keys())[0]]["images"][0]
-                                            print(f"获取到图像文件名: {image_data['filename']}")
+                                            logger.info(f"获取到图像文件名: {image_data['filename']}")
                                             async with client.session.get(f"{client.base_url}/view?filename={image_data['filename']}") as img_response:
                                                 if img_response.status == 200:
                                                     image_bytes = await img_response.read()
                                                     image_data = base64.b64encode(image_bytes).decode()
                                                     image_url = f"data:image/png;base64,{image_data}"
-                                                    print("图像获取成功")
+                                                    logger.info("图像获取成功")
                                                     yield image_url, "生成成功！"
                                                     return
                         except Exception as e:
-                            print(f"获取图像时出错: {str(e)}")
+                            logger.error(f"获取图像时出错: {str(e)}")
                             yield None, f"获取图像失败：{str(e)}"
                             return
                     elif "error" in result:
-                        print(f"错误: {result['error']}")
+                        logger.error(f"错误: {result['error']}")
                         yield None, f"生成失败：{result['error']}"
                         return
                 
                 # 添加超时检查
                 if "type" in result and result["type"] == "status" and result.get("data", {}).get("status", {}).get("exec_info", {}).get("queue_remaining", 0) == 0:
                     # 如果队列为空且没有收到完成消息，可能是已经完成但没有收到通知
-                    print("队列为空，尝试获取结果...")
+                    logger.info("队列为空，尝试获取结果...")
                     try:
                         async with client.session.get(f"{client.base_url}/history") as response:
                             if response.status == 200:
                                 history = await response.json()
-                                print(f"历史记录: {history}")
                                 if history:
                                     # 获取最新的输出
                                     latest_output = list(history.values())[-1]["outputs"]
                                     if latest_output:
                                         # 获取图像数据
                                         image_data = latest_output[list(latest_output.keys())[0]]["images"][0]
-                                        print(f"图像数据: {image_data}")
+                                        logger.info(f"图像数据: {image_data['filename']}")
                                         async with client.session.get(f"{client.base_url}/view?filename={image_data['filename']}") as img_response:
                                             if img_response.status == 200:
                                                 image_bytes = await img_response.read()
                                                 image_data = base64.b64encode(image_bytes).decode()
                                                 image_url = f"data:image/png;base64,{image_data}"
-                                                print("图像获取成功")
+                                                logger.info("图像获取成功")
                                                 yield image_url, "生成成功！"
                                                 return
                     except Exception as e:
-                        print(f"获取图像时出错: {str(e)}")
+                        logger.error(f"获取图像时出错: {str(e)}")
                         yield None, f"获取图像失败：{str(e)}"
                         return
                 
     except Exception as e:
-        print(f"发生错误: {str(e)}")
+        logger.error(f"发生错误: {str(e)}")
         yield None, f"生成失败：{str(e)}"
 
 with gr.Blocks(title="PegaAI", css="""
@@ -610,7 +612,5 @@ if __name__ == "__main__":
     demo.launch(
         server_name="0.0.0.0",
         server_port=7860,
-        share=True,
-        favicon_path="static/logo.jpg",
-        root_path="backend"
+        share=True
     ) 
