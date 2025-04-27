@@ -9,6 +9,8 @@ from pathlib import Path
 import logging
 import tempfile
 import os
+import shutil
+import glob
 
 # 设置日志级别
 logging.basicConfig(level=logging.INFO)
@@ -66,6 +68,10 @@ def translate_negative_prompt(negative_prompt: str) -> str:
     expanded_negative = f"""{negative_prompt}, text, watermark, signature, logo, username, artist name, (worst quality:1.4), (low quality:1.4), (normal quality:1.4), lowres, bad anatomy, bad hands, error, missing fingers, extra digit, fewer digits, cropped, jpeg artifacts, signature, watermark, username, blurry, bad feet, poorly drawn hands, poorly drawn face, mutation, deformed, extra fingers, extra limbs, extra arms, extra legs, malformed limbs, fused fingers, too many fingers, long neck, cross-eyed, mutated hands, polar lowres, bad body, bad proportions, gross proportions, missing arms, missing legs, extra digit, extra arms, extra leg, extra foot, ((repeating hair))"""
     
     return expanded_negative
+
+# 确保作品库目录存在
+gallery_dir = Path(__file__).parent / "gallery"
+gallery_dir.mkdir(exist_ok=True)
 
 async def generate_image(prompt, negative_prompt, steps, guidance):
     try:
@@ -242,6 +248,10 @@ async def generate_image(prompt, negative_prompt, steps, guidance):
                                         temp_file = os.path.join(temp_dir, f"img_{short_id}.png")
                                         with open(temp_file, "wb") as f:
                                             f.write(image_data)
+                                        # 保存到作品库
+                                        gallery_path = gallery_dir / f"{int(time.time())}.png"
+                                        shutil.copy(temp_file, gallery_path)
+                                        logger.info(f"[文生图] 已保存到作品库: {gallery_path}")
                                         yield temp_file, 1.0, "生成完成！"
                                         return
                                     else:
@@ -461,8 +471,10 @@ async def generate_variation(image, prompt, negative_prompt, strength, steps, gu
                                         temp_file = os.path.join(temp_dir, f"img_{short_id}.png")
                                         with open(temp_file, "wb") as f:
                                             f.write(image_data)
-                                        logger.info(f"[图生图] 图片已保存到: {temp_file}")
-                                        # 返回临时文件路径
+                                        # 保存到作品库
+                                        gallery_path = gallery_dir / f"{int(time.time())}.png"
+                                        shutil.copy(temp_file, gallery_path)
+                                        logger.info(f"[图生图] 已保存到作品库: {gallery_path}")
                                         yield temp_file, 1.0, "生成完成！"
                                         return
                                     else:
@@ -489,7 +501,10 @@ async def generate_variation(image, prompt, negative_prompt, strength, steps, gu
                                         temp_file = os.path.join(temp_dir, f"img_{short_id}.png")
                                         with open(temp_file, "wb") as f:
                                             f.write(image_data)
-                                        logger.info(f"[图生图] 队列清空后图片已保存到: {temp_file}")
+                                        # 保存到作品库
+                                        gallery_path = gallery_dir / f"{int(time.time())}.png"
+                                        shutil.copy(temp_file, gallery_path)
+                                        logger.info(f"[图生图] 已保存到作品库: {gallery_path}")
                                         yield temp_file, 1.0, "生成完成！"
                                         return
                                     else:
@@ -516,8 +531,10 @@ async def generate_variation(image, prompt, negative_prompt, strength, steps, gu
                                 temp_file = os.path.join(temp_dir, f"img_{short_id}.png")
                                 with open(temp_file, "wb") as f:
                                     f.write(image_data)
-                                logger.info(f"[图生图] 超时后图片已保存到: {temp_file}")
-                                # 返回临时文件路径
+                                # 保存到作品库
+                                gallery_path = gallery_dir / f"{int(time.time())}.png"
+                                shutil.copy(temp_file, gallery_path)
+                                logger.info(f"[图生图] 已保存到作品库: {gallery_path}")
                                 yield temp_file, 1.0, "生成完成！"
                             else:
                                 logger.error(f"[图生图] 超时后获取图像失败，状态码: {response.status}")
@@ -532,6 +549,11 @@ async def generate_variation(image, prompt, negative_prompt, strength, steps, gu
     except Exception as e:
         logger.error(f"[图生图] 发生错误: {str(e)}")
         yield None, 0, f"生成失败：{str(e)}"
+
+def get_gallery_images():
+    # 获取gallery目录下所有png/jpg图片路径，按时间倒序
+    image_files = sorted(gallery_dir.glob("*.png"), reverse=True)
+    return [str(p) for p in image_files]
 
 with gr.Blocks(title="PegaAI", css="""
     footer {display: none}
@@ -703,6 +725,11 @@ with gr.Blocks(title="PegaAI", css="""
                     )
                 with gr.Column():
                     var_image = gr.Image(label="生成结果")
+        
+        with gr.TabItem("作品库"):
+            gallery_imgs = gr.Gallery(label="作品库", value=get_gallery_images(), elem_id="gallery-view", show_label=False, columns=4, height=400)
+            refresh_btn = gr.Button("刷新")
+            refresh_btn.click(fn=lambda: get_gallery_images(), inputs=[], outputs=gallery_imgs)
     
     # 添加JavaScript代码来更新进度条样式
     demo.load(js="""
