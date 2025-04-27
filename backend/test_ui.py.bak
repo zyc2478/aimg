@@ -1,0 +1,613 @@
+import gradio as gr
+import asyncio
+import base64
+from PIL import Image
+import io
+import json
+import sys
+from pathlib import Path
+import logging
+
+# 设置日志级别
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+sys.path.append(str(Path(__file__).parent))
+from app.utils.comfyui_client import ComfyUIClient
+import time
+
+def translate_and_expand_prompt(prompt: str) -> str:
+    """将中文提示词翻译成英文并扩写成标准格式"""
+    # 这里使用一个简单的映射表，实际应用中可以使用更复杂的翻译API
+    translations = {
+        "龙骑士少女": "young dragon knight girl",
+        "银色铠甲": "silver armor",
+        "红色巨龙": "majestic red dragon",
+        "火山喷发": "erupting volcano",
+        "奇幻生物": "fantasy creatures",
+        "史诗奇幻": "epic fantasy",
+        "细节丰富": "highly detailed",
+        "光影对比": "dramatic lighting and shadows",
+        "低质量": "low quality",
+        "模糊": "blurry",
+        "扭曲": "distorted",
+        "变形": "deformed",
+        "丑陋": "ugly",
+        "糟糕的艺术": "bad art",
+        "糟糕的解剖": "bad anatomy",
+        "糟糕的手": "bad hands",
+        "糟糕的脚": "bad feet",
+        "糟糕的面部": "bad face",
+        "糟糕的比例": "bad proportions"
+    }
+    
+    # 替换中文关键词
+    translated_prompt = prompt
+    for cn, en in translations.items():
+        translated_prompt = translated_prompt.replace(cn, en)
+    
+    # 扩写成标准格式
+    expanded_prompt = f"""Main Theme:
+{translated_prompt}
+
+Style Specifications:
+- High quality, masterpiece
+- Highly detailed
+- Best quality
+- Ultra realistic
+- Professional photography
+- Dramatic lighting
+- Sharp focus
+- High resolution
+
+Additional Details:
+- Rich color palette
+- Intricate details
+- Perfect composition
+- Cinematic atmosphere
+- Professional lighting setup
+- 8k resolution
+- Photorealistic rendering
+- Masterful technique"""
+    
+    return expanded_prompt
+
+def translate_negative_prompt(negative_prompt: str) -> str:
+    """将中文反向提示词翻译成英文"""
+    # 这里使用一个简单的映射表，实际应用中可以使用更复杂的翻译API
+    translations = {
+        "低质量": "low quality",
+        "模糊": "blurry",
+        "扭曲": "distorted",
+        "变形": "deformed",
+        "丑陋": "ugly",
+        "糟糕的艺术": "bad art",
+        "糟糕的解剖": "bad anatomy",
+        "糟糕的手": "bad hands",
+        "糟糕的脚": "bad feet",
+        "糟糕的面部": "bad face",
+        "糟糕的比例": "bad proportions"
+    }
+    
+    # 替换中文关键词
+    translated_negative = negative_prompt if negative_prompt else "low quality, blurry, bad anatomy, bad hands, cropped, worst quality"
+    for cn, en in translations.items():
+        translated_negative = translated_negative.replace(cn, en)
+    
+    # 添加标准的负面提示词
+    expanded_negative = f"""{translated_negative}, text, watermark, signature, logo, username, artist name, (worst quality:1.4), (low quality:1.4), (normal quality:1.4), lowres, bad anatomy, bad hands, error, missing fingers, extra digit, fewer digits, cropped, jpeg artifacts, signature, watermark, username, blurry, bad feet, poorly drawn hands, poorly drawn face, mutation, deformed, extra fingers, extra limbs, extra arms, extra legs, malformed limbs, fused fingers, too many fingers, long neck, cross-eyed, mutated hands, polar lowres, bad body, bad proportions, gross proportions, missing arms, missing legs, extra digit, extra arms, extra leg, extra foot, ((repeating hair))"""
+    
+    return expanded_negative
+
+async def generate_image(prompt, negative_prompt, steps, guidance):
+    try:
+        logger.info("开始生成图像...")
+        # 翻译并扩写提示词
+        translated_prompt = translate_and_expand_prompt(prompt)
+        translated_negative_prompt = translate_negative_prompt(negative_prompt)
+        logger.info(f"处理后的提示词: {translated_prompt[:100]}...")
+        
+        # 创建工作流
+        workflow = {
+            "5": {
+                "class_type": "EmptyLatentImage",
+                "inputs": {
+                    "width": 1024,
+                    "height": 1024,
+                    "batch_size": 1
+                }
+            },
+            "22": {
+                "class_type": "BasicGuider",
+                "inputs": {
+                    "model": ["12", 0],
+                    "conditioning": ["6", 0]
+                }
+            },
+            "8": {
+                "class_type": "VAEDecode",
+                "inputs": {
+                    "samples": ["13", 0],
+                    "vae": ["10", 0]
+                }
+            },
+            "25": {
+                "class_type": "RandomNoise",
+                "inputs": {
+                    "noise_seed": 782619153058034
+                }
+            },
+            "11": {
+                "class_type": "DualCLIPLoader",
+                "inputs": {
+                    "clip_name1": "t5xxl_fp16.safetensors",
+                    "clip_name2": "clip_l.safetensors",
+                    "type": "flux"
+                }
+            },
+            "10": {
+                "class_type": "VAELoader",
+                "inputs": {
+                    "vae_name": "ae.sft"
+                }
+            },
+            "9": {
+                "class_type": "SaveImage",
+                "inputs": {
+                    "images": ["8", 0],
+                    "filename_prefix": "ComfyUI"
+                }
+            },
+            "17": {
+                "class_type": "BasicScheduler",
+                "inputs": {
+                    "model": ["12", 0],
+                    "steps": 20,
+                    "scheduler": "normal",
+                    "denoise": 1
+                }
+            },
+            "16": {
+                "class_type": "KSamplerSelect",
+                "inputs": {
+                    "sampler_name": "euler"
+                }
+            },
+            "13": {
+                "class_type": "SamplerCustomAdvanced",
+                "inputs": {
+                    "noise": ["25", 0],
+                    "guider": ["22", 0],
+                    "sampler": ["16", 0],
+                    "sigmas": ["17", 0],
+                    "latent_image": ["5", 0]
+                }
+            },
+            "6": {
+                "class_type": "CLIPTextEncode",
+                "inputs": {
+                    "clip": ["11", 0],
+                    "text": translated_prompt
+                }
+            },
+            "12": {
+                "class_type": "UNETLoader",
+                "inputs": {
+                    "unet_name": "FLUX\\flux1-dev.sft",
+                    "weight_dtype": "fp8_e4m3fn"
+                }
+            }
+        }
+        
+        logger.info("正在连接ComfyUI服务器...")
+        async with ComfyUIClient(host="101.126.152.137", port=8188) as client:
+            client_id = f"pegaai_{int(time.time())}"  # 生成唯一的client_id
+            logger.info(f"使用client_id: {client_id}")
+            
+            logger.info("提交工作流...")
+            prompt_id = await client.submit_prompt(workflow, client_id)
+            logger.info(f"工作流已提交，ID: {prompt_id}")
+            yield None, "工作流已提交，正在生成图像..."
+            
+            logger.info("连接WebSocket...")
+            await client.connect_websocket(client_id)
+            logger.info("WebSocket已连接")
+            
+            last_status_time = time.time()
+            last_progress = 0
+            
+            while True:
+                try:
+                    result = await client.listen_websocket()
+                    current_time = time.time()
+                    
+                    if isinstance(result, dict):
+                        if result.get("type") == "progress":
+                            progress = result.get("data", {})
+                            current_step = progress.get("value", 0)
+                            total_steps = progress.get("max", 0)
+                            if total_steps > 0:
+                                percentage = (current_step / total_steps) * 100
+                                if percentage > last_progress:
+                                    logger.info(f"生成进度: {percentage:.1f}%")
+                                    yield None, f"生成进度: {percentage:.1f}% ({current_step}/{total_steps})"
+                                    last_progress = percentage
+                                last_status_time = current_time
+                        
+                        elif result.get("type") == "executing":
+                            if result.get("data", {}).get("node") is None:
+                                logger.info("执行完成，等待1秒后获取图像...")
+                                await asyncio.sleep(1)  # 等待确保图像已保存
+                                image_url = await get_latest_image(client)
+                                if image_url:
+                                    logger.info("图像获取成功")
+                                    yield image_url, "生成完成！"
+                                    return
+                                else:
+                                    logger.warning("未能获取到图像，继续等待...")
+                        
+                        elif result.get("type") == "status":
+                            status = result.get("data", {}).get("status", {})
+                            queue_remaining = status.get("exec_info", {}).get("queue_remaining", 1)
+                            logger.info(f"队列剩余: {queue_remaining}")
+                            if queue_remaining == 0:
+                                logger.info("队列为空，检查结果...")
+                                image_url = await get_latest_image(client)
+                                if image_url:
+                                    logger.info("图像获取成功")
+                                    yield image_url, "生成完成！"
+                                    return
+                    
+                    # 超时检查
+                    if current_time - last_status_time > 30:
+                        logger.warning("等待超时，尝试最后一次获取结果...")
+                        image_url = await get_latest_image(client)
+                        if image_url:
+                            yield image_url, "生成完成！"
+                        else:
+                            yield None, "生成超时，请重试"
+                        return
+                    
+                except Exception as e:
+                    logger.error(f"处理WebSocket消息时出错: {str(e)}")
+                    yield None, f"生成出错：{str(e)}"
+                    return
+                
+                await asyncio.sleep(0.1)
+                
+    except Exception as e:
+        logger.error(f"发生错误: {str(e)}")
+        yield None, f"生成失败：{str(e)}"
+
+async def get_latest_image(client):
+    """获取最新生成的图像"""
+    try:
+        logger.info("尝试获取最新图像...")
+        async with client.session.get(f"{client.base_url}/history") as response:
+            if response.status == 200:
+                history = await response.json()
+                if history:
+                    latest_output = list(history.values())[-1]["outputs"]
+                    if latest_output:
+                        node_id = list(latest_output.keys())[0]
+                        image_data = latest_output[node_id]["images"][0]
+                        async with client.session.get(f"{client.base_url}/view?filename={image_data['filename']}") as img_response:
+                            if img_response.status == 200:
+                                image_bytes = await img_response.read()
+                                return f"data:image/png;base64,{base64.b64encode(image_bytes).decode()}"
+                            else:
+                                logger.warning(f"获取图像失败，状态码: {img_response.status}")
+                else:
+                    logger.warning("未找到图像输出")
+            else:
+                logger.warning("历史记录为空")
+    except Exception as e:
+        logger.error(f"获取图像时出错: {str(e)}")
+    return None
+
+async def generate_variation(image, prompt, negative_prompt, strength, steps, guidance):
+    try:
+        if image is None:
+            yield None, "请先上传图片！"
+            return
+        
+        # 翻译并扩写提示词
+        translated_prompt = translate_and_expand_prompt(prompt)
+        translated_negative_prompt = translate_negative_prompt(negative_prompt)
+        logger.info(f"翻译后的提示词: {translated_prompt}")
+        logger.info(f"翻译后的反向提示词: {translated_negative_prompt}")
+        
+        # 将图片转换为base64
+        buffered = io.BytesIO()
+        image.save(buffered, format="PNG")
+        img_str = base64.b64encode(buffered.getvalue()).decode()
+        
+        # 创建工作流
+        workflow = {
+            "5": {
+                "class_type": "EmptyLatentImage",
+                "inputs": {
+                    "width": 1024,
+                    "height": 1024,
+                    "batch_size": 1
+                }
+            },
+            "22": {
+                "class_type": "BasicGuider",
+                "inputs": {
+                    "model": ["12", 0],
+                    "conditioning": ["6", 0]
+                }
+            },
+            "8": {
+                "class_type": "VAEDecode",
+                "inputs": {
+                    "samples": ["13", 0],
+                    "vae": ["10", 0]
+                }
+            },
+            "25": {
+                "class_type": "RandomNoise",
+                "inputs": {
+                    "noise_seed": 782619153058034
+                }
+            },
+            "11": {
+                "class_type": "DualCLIPLoader",
+                "inputs": {
+                    "clip_name1": "t5xxl_fp16.safetensors",
+                    "clip_name2": "clip_l.safetensors",
+                    "type": "flux"
+                }
+            },
+            "10": {
+                "class_type": "VAELoader",
+                "inputs": {
+                    "vae_name": "ae.sft"
+                }
+            },
+            "9": {
+                "class_type": "SaveImage",
+                "inputs": {
+                    "images": ["8", 0],
+                    "filename_prefix": "ComfyUI"
+                }
+            },
+            "17": {
+                "class_type": "BasicScheduler",
+                "inputs": {
+                    "model": ["12", 0],
+                    "steps": 20,
+                    "scheduler": "normal",
+                    "denoise": 1
+                }
+            },
+            "16": {
+                "class_type": "KSamplerSelect",
+                "inputs": {
+                    "sampler_name": "euler"
+                }
+            },
+            "13": {
+                "class_type": "SamplerCustomAdvanced",
+                "inputs": {
+                    "noise": ["25", 0],
+                    "guider": ["22", 0],
+                    "sampler": ["16", 0],
+                    "sigmas": ["17", 0],
+                    "latent_image": ["5", 0]
+                }
+            },
+            "6": {
+                "class_type": "CLIPTextEncode",
+                "inputs": {
+                    "clip": ["11", 0],
+                    "text": translated_prompt
+                }
+            },
+            "12": {
+                "class_type": "UNETLoader",
+                "inputs": {
+                    "unet_name": "FLUX\\flux1-dev.sft",
+                    "weight_dtype": "fp8_e4m3fn"
+                }
+            }
+        }
+        
+        logger.info("正在连接ComfyUI服务器...")
+        # 使用异步客户端
+        async with ComfyUIClient(host="101.126.152.137", port=8188) as client:
+            # 提交工作流
+            logger.info("提交工作流...")
+            prompt_id = await client.submit_prompt(workflow)
+            logger.info(f"工作流已提交，ID: {prompt_id}")
+            yield None, "工作流已提交，正在生成图像..."
+            
+            # 连接WebSocket并等待结果
+            logger.info("连接WebSocket...")
+            await client.connect_websocket()
+            logger.info("WebSocket已连接")
+            
+            # 监听进度
+            while True:
+                logger.info("等待WebSocket消息...")
+                result = await client.listen_websocket()
+                if "type" in result:
+                    logger.info(f"收到消息类型: {result['type']}")
+                
+                if isinstance(result, dict):
+                    if "type" in result and result["type"] == "progress":
+                        progress = result.get("data", {})
+                        current_step = progress.get("value", 0)
+                        total_steps = progress.get("max", 0)
+                        if total_steps > 0:
+                            percentage = (current_step / total_steps) * 100
+                            logger.info(f"进度: {percentage:.1f}%")
+                            yield None, f"生成进度: {percentage:.1f}% ({current_step}/{total_steps})"
+                    elif "type" in result and result["type"] == "executing" and result.get("data", {}).get("node") is None:
+                        logger.info("生成完成，获取图像...")
+                        try:
+                            async with client.session.get(f"{client.base_url}/history") as response:
+                                if response.status == 200:
+                                    history = await response.json()
+                                    if history:
+                                        latest_output = list(history.values())[-1]["outputs"]
+                                        if latest_output:
+                                            image_data = latest_output[list(latest_output.keys())[0]]["images"][0]
+                                            async with client.session.get(f"{client.base_url}/view?filename={image_data['filename']}") as img_response:
+                                                if img_response.status == 200:
+                                                    image_bytes = await img_response.read()
+                                                    image_data = base64.b64encode(image_bytes).decode()
+                                                    image_url = f"data:image/png;base64,{image_data}"
+                                                    logger.info("图像获取成功")
+                                                    yield image_url, "生成成功！"
+                                                    return
+                        except Exception as e:
+                            logger.error(f"获取图像时出错: {str(e)}")
+                            yield None, f"获取图像失败：{str(e)}"
+                            return
+                    elif "error" in result:
+                        logger.error(f"错误: {result['error']}")
+                        yield None, f"生成失败：{result['error']}"
+                        return
+                
+                # 添加超时检查
+                if "type" in result and result["type"] == "status" and result.get("data", {}).get("status", {}).get("exec_info", {}).get("queue_remaining", 0) == 0:
+                    # 如果队列为空且没有收到完成消息，可能是已经完成但没有收到通知
+                    logger.info("队列为空，尝试获取结果...")
+                    try:
+                        async with client.session.get(f"{client.base_url}/history") as response:
+                            if response.status == 200:
+                                history = await response.json()
+                                if history:
+                                    # 获取最新的输出
+                                    latest_output = list(history.values())[-1]["outputs"]
+                                    if latest_output:
+                                        # 获取图像数据
+                                        image_data = latest_output[list(latest_output.keys())[0]]["images"][0]
+                                        async with client.session.get(f"{client.base_url}/view?filename={image_data['filename']}") as img_response:
+                                            if img_response.status == 200:
+                                                image_bytes = await img_response.read()
+                                                image_data = base64.b64encode(image_bytes).decode()
+                                                image_url = f"data:image/png;base64,{image_data}"
+                                                logger.info("图像获取成功")
+                                                yield image_url, "生成成功！"
+                                                return
+                    except Exception as e:
+                        logger.error(f"获取图像时出错: {str(e)}")
+                        yield None, f"获取图像失败：{str(e)}"
+                        return
+                
+    except Exception as e:
+        logger.error(f"发生错误: {str(e)}")
+        yield None, f"生成失败：{str(e)}"
+
+with gr.Blocks(title="PegaAI", css="""
+    footer {display: none}
+    .author-info {
+        position: fixed;
+        bottom: 10px;
+        right: 20px;
+        font-size: 14px;
+        color: #1f6feb;
+        font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+        z-index: 1000;
+    }
+    .logo-container {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+    }
+    .logo-container img {
+        width: 40px;
+        height: 40px;
+    }
+    .logo-container h1 {
+        margin: 0;
+    }
+""") as demo:
+    with gr.Row():
+        with gr.Column(scale=1):
+            gr.HTML("""
+                <div class="logo-container">
+                    <img src="/file/static/logo.jpg" width="40" height="40" alt="PegaAI Logo">
+                    <h1>PegaAI</h1>
+                </div>
+            """)
+    
+    gr.Markdown("<hr style='margin-top: 0; margin-bottom: 20px;'>")
+    
+    with gr.Tabs() as tabs:
+        with gr.TabItem("文生图"):
+            with gr.Row():
+                with gr.Column():
+                    prompt = gr.Textbox(
+                        label="提示词",
+                        placeholder="请输入您的提示词",
+                        lines=2,
+                        max_lines=20,
+                        autoscroll=False,
+                        show_copy_button=True
+                    )
+                    negative_prompt = gr.Textbox(
+                        label="反向提示词",
+                        placeholder="low quality, blurry, bad anatomy, bad hands, cropped, worst quality",
+                        lines=2,
+                        max_lines=20,
+                        autoscroll=False,
+                        show_copy_button=True
+                    )
+                    with gr.Row():
+                        steps = gr.Slider(minimum=1, maximum=100, value=20, step=1, label="推理步数")
+                        guidance = gr.Slider(minimum=1, maximum=20, value=7, step=0.1, label="提示词引导系数")
+                    with gr.Row():
+                        with gr.Column(scale=3):
+                            gen_button = gr.Button("生成", variant="primary")
+                        with gr.Column(scale=1):
+                            clear_button = gr.Button("清除")
+                    gen_output = gr.Textbox(label="生成状态")
+                with gr.Column():
+                    output_image = gr.Image(label="生成结果")
+        
+        with gr.TabItem("图生图"):
+            with gr.Row():
+                with gr.Column():
+                    input_image = gr.Image(label="上传图片", type="pil")
+                    var_prompt = gr.Textbox(
+                        label="提示词",
+                        lines=2,
+                        max_lines=20,
+                        autoscroll=False,
+                        show_copy_button=True
+                    )
+                    var_negative_prompt = gr.Textbox(
+                        label="反向提示词",
+                        placeholder="low quality, blurry, bad anatomy, bad hands, cropped, worst quality",
+                        lines=2,
+                        max_lines=20,
+                        autoscroll=False,
+                        show_copy_button=True
+                    )
+                    with gr.Row():
+                        var_strength = gr.Slider(minimum=0, maximum=1, value=0.75, step=0.01, label="转换强度")
+                        var_steps = gr.Slider(minimum=1, maximum=100, value=20, step=1, label="推理步数")
+                        var_guidance = gr.Slider(minimum=1, maximum=20, value=7, step=0.1, label="提示词引导系数")
+                    var_button = gr.Button("生成变体", variant="primary")
+                    var_output = gr.Textbox(label="生成状态")
+                with gr.Column():
+                    var_image = gr.Image(label="生成结果")
+    
+    # 绑定事件
+    gen_button.click(generate_image, [prompt, negative_prompt, steps, guidance], [output_image, gen_output])
+    var_button.click(generate_variation, [input_image, var_prompt, var_negative_prompt, var_strength, var_steps, var_guidance], [var_image, var_output])
+    clear_button.click(lambda: (None, ""), [], [output_image, gen_output])
+
+    # 只保留右下角的作者信息
+    gr.HTML('<div class="author-info">author by：pegasus studio @2025</div>')
+
+if __name__ == "__main__":
+    demo.launch(
+        server_name="0.0.0.0",
+        server_port=7860,
+        share=True
+    ) 
