@@ -35,7 +35,6 @@ __pycache__/
 *$py.class
 *.so
 .Python
-env/
 build/
 develop-eggs/
 dist/
@@ -55,7 +54,7 @@ wheels/
 # Virtual Environment
 venv/
 ENV/
-.env
+env/
 
 # Logs
 *.log
@@ -67,4 +66,20 @@ ENV/
 .env.production.local
 
 # Gradio
-flagged/ 
+flagged/
+
+# Database
+*.db
+*.sqlite3
+
+# Test coverage
+.coverage
+htmlcov/
+
+# Distribution
+dist/
+build/
+
+# Misc
+.DS_Store
+Thumbs.db 

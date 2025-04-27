@@ -1,71 +1,111 @@
-# AI Image Generation Project
+# PegaAI
 
-基于 Stable Diffusion 的 AI 图像生成项目，提供简单易用的 Web 界面。
+PegaAI是一个强大的AI图像生成和管理平台，支持多种AI引擎，提供作品分享和社区功能。
 
 ## 功能特点
 
-- 文本到图像生成
-- 图像到图像转换
-- 简单易用的 Web 界面
-- RESTful API 支持
-- 支持多种模型和参数配置
+- 支持多种AI引擎（Stable Diffusion、Midjourney等）
+- 作品库管理
+- 作品分享功能
+- 社区互动
+- RESTful API
 
 ## 技术栈
 
-- 后端：Python, FastAPI, Gradio
-- 前端：React, TypeScript
-- AI 模型：Stable Diffusion
+- Python 3.8+
+- FastAPI
+- SQLAlchemy
+- PostgreSQL
+- Alembic
+- Pytest
 
-## 安装说明
+## 快速开始
 
-1. 克隆仓库
+1. 克隆仓库：
 ```bash
-git clone https://github.com/zyc2478/aimg.git
-cd aimg
+git clone https://github.com/yourusername/pegaai.git
+cd pegaai
 ```
 
-2. 安装后端依赖
+2. 创建虚拟环境：
 ```bash
-cd backend
 python -m venv venv
 source venv/bin/activate  # Linux/Mac
 # 或
 .\venv\Scripts\activate  # Windows
+```
+
+3. 安装依赖：
+```bash
 pip install -r requirements.txt
 ```
 
-3. 安装前端依赖
+4. 配置环境变量：
 ```bash
-cd frontend
-npm install
+cp .env.example .env
+# 编辑.env文件，设置必要的环境变量
 ```
 
-## 运行项目
-
-1. 启动后端服务
+5. 初始化数据库：
 ```bash
-cd backend
+alembic upgrade head
+```
+
+6. 运行应用：
+```bash
 python app/main.py
 ```
 
-2. 启动前端服务
-```bash
-cd frontend
-npm run dev
+7. 访问API文档：
+```
+http://localhost:8000/docs
 ```
 
-访问 http://localhost:3000 即可使用 Web 界面。
+## 项目结构
 
-## API 文档
+```
+pegaai/
+├── app/
+│   ├── api/
+│   │   └── v1/
+│   ├── core/
+│   ├── db/
+│   ├── models/
+│   └── schemas/
+├── tests/
+├── alembic/
+├── alembic.ini
+├── requirements.txt
+└── README.md
+```
 
-API 文档可在 http://localhost:8000/docs 查看。
+## API文档
+
+API文档使用Swagger UI，可在以下地址访问：
+```
+http://localhost:8000/docs
+```
+
+主要API端点：
+- `/api/v1/auth/*` - 认证相关
+- `/api/v1/ai/*` - AI引擎相关
+- `/api/v1/works/*` - 作品管理相关
+
+## 测试
+
+运行测试：
+```bash
+pytest
+```
+
+## 贡献指南
+
+1. Fork 项目
+2. 创建特性分支 (`git checkout -b feature/AmazingFeature`)
+3. 提交更改 (`git commit -m 'Add some AmazingFeature'`)
+4. 推送到分支 (`git push origin feature/AmazingFeature`)
+5. 创建Pull Request
 
 ## 许可证
 
-MIT License
-
-## 新增功能：作品库
-
-- 所有通过"文生图"或"图生图"生成的图片，都会自动保存到 `backend/gallery` 目录，文件名为时间戳。
-- Web 界面顶部菜单新增"作品库"Tab，可浏览所有已生成图片，支持点击"刷新"实时查看新作品。
-- 作品库图片按生成时间倒序排列。
+本项目采用MIT许可证 - 查看 [LICENSE](LICENSE) 文件了解详情
