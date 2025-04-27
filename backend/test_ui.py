@@ -287,25 +287,29 @@ async def get_latest_image(client):
 
 async def generate_variation(image, prompt, negative_prompt, strength, steps, guidance):
     try:
+        logger.info("[图生图] 开始执行 generate_variation")
         if image is None:
+            logger.warning("[图生图] 未上传图片，直接返回")
             yield None, 0, "请先上传图片！"
             return
         
         # 翻译并扩写提示词
         translated_prompt = translate_and_expand_prompt(prompt)
         translated_negative_prompt = translate_negative_prompt(negative_prompt)
-        logger.info(f"翻译后的提示词: {translated_prompt}")
-        logger.info(f"翻译后的反向提示词: {translated_negative_prompt}")
+        logger.info(f"[图生图] 翻译后的提示词: {translated_prompt}")
+        logger.info(f"[图生图] 翻译后的反向提示词: {translated_negative_prompt}")
         yield None, 0.1, "正在处理提示词..."
         
         # 将图片转换为base64
         buffered = io.BytesIO()
         image.save(buffered, format="PNG")
         img_str = base64.b64encode(buffered.getvalue()).decode()
+        logger.info("[图生图] 图片已转换为base64")
         
         # 生成简短的文件名
         timestamp = int(time.time())
         short_id = str(timestamp)[-6:]
+        logger.info(f"[图生图] short_id: {short_id}")
         
         # 创建工作流
         workflow = {
@@ -399,16 +403,16 @@ async def generate_variation(image, prompt, negative_prompt, strength, steps, gu
             }
         }
         
-        logger.info("正在连接ComfyUI服务器...")
+        logger.info("[图生图] 正在连接ComfyUI服务器...")
         yield None, 0.2, "正在连接ComfyUI服务器..."
         
         async with ComfyUIClient(host="101.126.152.137", port=8188) as client:
-            logger.info("提交工作流...")
+            logger.info("[图生图] 提交工作流...")
             prompt_id = await client.submit_prompt(workflow)
-            logger.info(f"工作流已提交，ID: {prompt_id}")
+            logger.info(f"[图生图] 工作流已提交，ID: {prompt_id}")
             yield None, 0.3, "工作流已提交，正在生成图像..."
             
-            logger.info("连接WebSocket...")
+            logger.info("[图生图] 连接WebSocket...")
             await client.connect_websocket()
             
             last_status_time = time.time()
@@ -417,6 +421,7 @@ async def generate_variation(image, prompt, negative_prompt, strength, steps, gu
             
             while True:
                 result = await client.listen_websocket()
+                logger.info(f"[图生图] WebSocket返回: {result}")
                 current_time = time.time()
                 
                 if isinstance(result, dict):
@@ -428,24 +433,27 @@ async def generate_variation(image, prompt, negative_prompt, strength, steps, gu
                             percentage = (current_step / total_steps) * 100
                             current_progress = 0.3 + (percentage / 100 * 0.6)
                             if percentage > last_progress:
-                                logger.info(f"生成进度: {percentage:.1f}%")
+                                logger.info(f"[图生图] 生成进度: {percentage:.1f}%")
                                 yield None, current_progress, f"正在生成图像... {percentage:.1f}% ({current_step}/{total_steps})"
                                 last_progress = percentage
                             last_status_time = current_time
                     
                     elif result.get("type") == "executing":
                         node_id = result.get("data", {}).get("node")
+                        logger.info(f"[图生图] executing node_id: {node_id}")
                         if node_id:
                             node_name = workflow.get(node_id, {}).get("class_type", "未知节点")
                             yield None, current_progress, f"正在执行: {node_name}"
                         elif result.get("data", {}).get("node") is None:
-                            logger.info("执行完成，等待1秒后获取图像...")
+                            logger.info("[图生图] 执行完成，等待1秒后获取图像...")
                             yield None, 0.9, "执行完成，正在获取图像..."
                             await asyncio.sleep(1)
                             image_url = await get_latest_image(client)
+                            logger.info(f"[图生图] 获取到的image_url: {image_url}")
                             if image_url:
                                 # 获取图像数据
                                 async with client.session.get(image_url) as response:
+                                    logger.info(f"[图生图] 拉取图片状态码: {response.status}")
                                     if response.status == 200:
                                         image_data = await response.read()
                                         # 将图片保存到系统临时目录
@@ -453,21 +461,54 @@ async def generate_variation(image, prompt, negative_prompt, strength, steps, gu
                                         temp_file = os.path.join(temp_dir, f"img_{short_id}.png")
                                         with open(temp_file, "wb") as f:
                                             f.write(image_data)
+                                        logger.info(f"[图生图] 图片已保存到: {temp_file}")
                                         # 返回临时文件路径
                                         yield temp_file, 1.0, "生成完成！"
                                         return
                                     else:
+                                        logger.error(f"[图生图] 获取图像失败，状态码: {response.status}")
                                         yield None, 0, f"获取图像失败，状态码: {response.status}"
                             else:
-                                logger.warning("未能获取到图像，继续等待...")
+                                logger.warning("[图生图] 未能获取到图像，继续等待...")
+                
+                    # 新增：处理 status 队列清空
+                    elif result.get("type") == "status":
+                        exec_info = result.get("data", {}).get("status", {}).get("exec_info", {})
+                        if exec_info.get("queue_remaining", 1) == 0:
+                            logger.info("[图生图] 队列已清空，尝试获取图片")
+                            yield None, 0.95, "队列已清空，正在获取图像..."
+                            await asyncio.sleep(1)
+                            image_url = await get_latest_image(client)
+                            logger.info(f"[图生图] 队列清空后获取到的image_url: {image_url}")
+                            if image_url:
+                                async with client.session.get(image_url) as response:
+                                    logger.info(f"[图生图] 队列清空后拉取图片状态码: {response.status}")
+                                    if response.status == 200:
+                                        image_data = await response.read()
+                                        temp_dir = tempfile.gettempdir()
+                                        temp_file = os.path.join(temp_dir, f"img_{short_id}.png")
+                                        with open(temp_file, "wb") as f:
+                                            f.write(image_data)
+                                        logger.info(f"[图生图] 队列清空后图片已保存到: {temp_file}")
+                                        yield temp_file, 1.0, "生成完成！"
+                                        return
+                                    else:
+                                        logger.error(f"[图生图] 队列清空后获取图像失败，状态码: {response.status}")
+                                        yield None, 0, f"获取图像失败，状态码: {response.status}"
+                            else:
+                                logger.error("[图生图] 队列清空后未能获取到图片")
+                                yield None, 0, "未能获取到图片"
+                            return
                 
                 # 超时检查
                 if current_time - last_status_time > 30:
-                    logger.warning("等待超时，尝试最后一次获取结果...")
+                    logger.warning("[图生图] 等待超时，尝试最后一次获取结果...")
                     image_url = await get_latest_image(client)
+                    logger.info(f"[图生图] 超时后获取到的image_url: {image_url}")
                     if image_url:
                         # 获取图像数据
                         async with client.session.get(image_url) as response:
+                            logger.info(f"[图生图] 超时拉取图片状态码: {response.status}")
                             if response.status == 200:
                                 image_data = await response.read()
                                 # 将图片保存到系统临时目录
@@ -475,18 +516,21 @@ async def generate_variation(image, prompt, negative_prompt, strength, steps, gu
                                 temp_file = os.path.join(temp_dir, f"img_{short_id}.png")
                                 with open(temp_file, "wb") as f:
                                     f.write(image_data)
+                                logger.info(f"[图生图] 超时后图片已保存到: {temp_file}")
                                 # 返回临时文件路径
                                 yield temp_file, 1.0, "生成完成！"
                             else:
+                                logger.error(f"[图生图] 超时后获取图像失败，状态码: {response.status}")
                                 yield None, 0, f"获取图像失败，状态码: {response.status}"
                     else:
+                        logger.error("[图生图] 生成超时，未能获取到图片")
                         yield None, 0, "生成超时，请重试"
                     return
                 
                 await asyncio.sleep(0.1)
                 
     except Exception as e:
-        logger.error(f"发生错误: {str(e)}")
+        logger.error(f"[图生图] 发生错误: {str(e)}")
         yield None, 0, f"生成失败：{str(e)}"
 
 with gr.Blocks(title="PegaAI", css="""
